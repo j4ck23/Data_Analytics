@@ -1,0 +1,190 @@
+import cv2 as cv
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+import tensorflow as tf
+from keras.wrappers.scikit_learn import KerasClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, accuracy_score
+import pandas as pd
+from keras.utils import to_categorical 
+
+#Neural networks defining
+def FCNN(unit, unit2):
+    FCNN = tf.keras.models.Sequential()
+    FCNN.add(tf.keras.layers.Dense(units = unit, activation='relu'))
+    FCNN.add(tf.keras.layers.Dense(units = unit2, activation='relu'))
+    FCNN.add(tf.keras.layers.Dense(units = 1, activation='sigmoid'))
+    FCNN.compile(optimizer='adam', loss='CategoricalCrossentropy', metrics=['accuracy'])
+    return FCNN
+
+def CNN(unit,unit2):
+    CNN = tf.keras.models.Sequential()
+    CNN.add(tf.keras.layers.Conv1D(unit, kernel_size= 5 ,activation='relu',))
+    CNN.add(tf.keras.layers.Conv1D(unit2, kernel_size= 5, activation='relu'))
+    CNN.add(tf.keras.layers.Flatten())
+    CNN.add(tf.keras.layers.Dense(1, activation='sigmoid'))
+    CNN.compile(optimizer='adam', loss='CategoricalCrossentropy', metrics=['accuracy'])
+    return CNN
+
+#Otsu thresholding
+def bgremove(img):
+    ## convert to hsv
+    lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+    # store the a-channel
+    a_channel = lab[:,:,1]
+    # Automate threshold using Otsu method
+    th = cv.threshold(a_channel,127,255,cv.THRESH_BINARY_INV+cv.THRESH_OTSU)[1]
+    # Mask the result with the original image\n",
+    masked = cv.bitwise_and(img, img, mask = th)
+    return masked
+
+#Create lists to store features and labels
+HOG = []
+labels = []
+new_size = (64,64)
+
+#Loops Through every image in given dictionary
+for root, subFolders, files in os.walk("Training/"):
+    for file in files:
+        file_name = root + "/" + file 
+        image = cv.imread(file_name)#Reads image
+        
+        resize_image = cv.resize(image, new_size)
+        #Enhance - Runs functions
+        noBG = bgremove(resize_image)
+        
+        #HOG - Settings
+        winSize = (32,32)
+        blockSize = (16,16)
+        blockStride = (8,8)
+        cellSize = (8,8)
+        nbins = 9
+        derivAperture = 1
+        winSigma = 4.
+        histogramNormType = 0
+        L2HysThreshold = 2.0000000000000001e-01
+        gammaCorrection = 0
+        nlevels = 64
+        hog = cv.HOGDescriptor(winSize,blockSize,blockStride,cellSize,nbins,derivAperture,winSigma,
+                                histogramNormType,L2HysThreshold,gammaCorrection,nlevels)
+        h = hog.compute(noBG)#Caclualtes the HOG
+        HOG.append(h)#Adds to array
+
+        # Extract label from filename
+        label = file_name.split("/")[-2] 
+        labels.append(label)
+
+X = np.array(HOG)
+y = np.array(labels)
+print(X.shape, y.shape)
+
+NNX = X.reshape(3251, 8100, 1)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+
+NNX_train, NNX_test, NNy_train, NNy_test = train_test_split(NNX, y, test_size=0.3)
+print(NNX_train.shape, NNy_train.shape)
+
+
+#-------------------------------------Hyper Parameter tuning----------------------------------------------------------
+param_SVC= {'C': [1, 10, 100], 'gamma': [0.001, 0.0001], 'kernel': ['linear','rbf']}
+param_KNN = {'n_neighbors':[1,2,3,4], 'leaf_size':[100, 200, 300, 400]}
+param_RF = {'n_estimators': [200, 500], 'max_features': ['auto', 'sqrt', 'log2'], 'max_depth' : [4,5,6,7,8]}
+param_FCNN = {'batch_size':[50,100,150],'epochs':[9, 12, 15], 'unit':[32, 64], 'unit2':[32, 16]}
+FCNN_Model = KerasClassifier(FCNN)
+param_CNN = {'batch_size':[50,100],'epochs':[3, 6], 'unit':[64, 32], 'unit2':[32, 16]}
+CNN_Model = KerasClassifier(CNN)
+
+"""
+TUNE_SVC = GridSearchCV(estimator=SVC(), param_grid=param_SVC, cv=10, scoring='accuracy')
+TUNE_SVC.fit(X_train,y_train)
+print("HyperParameter results")
+print(TUNE_SVC.cv_results_)
+print("")
+print("Best HyperParameters:")
+print(TUNE_SVC.best_estimator_)
+
+print("Summary of results")
+df = pd.DataFrame({'parammeters': TUNE_SVC.cv_results_["params"], 'Mean_Accuracy': TUNE_SVC.cv_results_["mean_test_score"]})
+print(df)
+
+TUNE_KNN = GridSearchCV(estimator=KNeighborsClassifier(), param_grid=param_KNN, cv=10, scoring='accuracy')
+TUNE_KNN.fit(X_train,y_train)
+print("HyperParameter results")
+print(TUNE_KNN.cv_results_)
+print("")
+print("Best HyperParameters:")
+print(TUNE_KNN.best_estimator_)
+
+
+print("Summary of results")
+df = pd.DataFrame({'parammeters': TUNE_KNN.cv_results_["params"], 'Mean_Accuracy': TUNE_KNN.cv_results_["mean_test_score"]})
+print(df)
+
+
+TUNE_FCNN = GridSearchCV(estimator=FCNN_Model, param_grid=param_FCNN, cv=10, scoring='accuracy')
+gs = TUNE_FCNN.fit(X_train,y_train)
+print("HyperParameter results")
+print(gs.cv_results_)
+print("")
+print("Best HyperParameters:")
+t = gs.best_estimator_
+print(t)
+
+
+print("Summary of results")
+df = pd.DataFrame({'parammeters': gs.cv_results_["params"], 'Mean_Accuracy': gs.cv_results_["mean_test_score"]})
+print(df)
+
+
+TUNE_CNN = GridSearchCV(estimator=CNN_Model, param_grid=param_CNN, cv=10, scoring='accuracy')
+gs = TUNE_CNN.fit(NNX_train,NNy_train)
+print("HyperParameter results")
+print(gs.cv_results_)
+print("")
+print("Best HyperParameters:")
+t = gs.best_estimator_
+print(t)
+
+
+print("Summary of results")
+df = pd.DataFrame({'parammeters': gs.cv_results_["params"], 'Mean_Accuracy': gs.cv_results_["mean_test_score"]})
+print(df)
+"""
+
+TUNE_RF = GridSearchCV(estimator=RandomForestClassifier(), param_grid=param_RF, cv=10, scoring='accuracy')
+TUNE_RF.fit(X_train,y_train)
+print("HyperParameter results")
+print(TUNE_RF.cv_results_)
+print("")
+print("Best HyperParameters:")
+print(TUNE_RF.best_estimator_)
+
+print("Summary of results")
+df = pd.DataFrame({'parammeters': TUNE_RF.cv_results_["params"], 'Mean_Accuracy': TUNE_RF.cv_results_["mean_test_score"]})
+print(df)
+#---------------------------HyperParameter End------------------------------
+#---------------------------Models Creation------------------------------
+"""
+clf = SVC()
+clf.fit(X_train,y_train)
+print(clf.score(X_train,y_train))
+
+m = KerasClassifier(FCNN)
+m.fit(X_train, y_train, epochs = 3)
+results = m.evaluate(X_test, y_test, batch_size=128)
+print(results)
+
+pred = clf.predict(X_test)
+
+matrix = confusion_matrix(y_test, pred)
+cm_display = ConfusionMatrixDisplay(confusion_matrix = matrix)
+
+print("Pred = ", accuracy_score(y_test, pred))
+cm_display.plot()
+plt.show()
+"""
